@@ -1,0 +1,336 @@
+Centos7环境CDH5.13.3安装
+
+1. 集群规划：
+	IP：172.16.150.64 cdh1.cdhcluster.com server/agent
+	IP：172.16.150.65 cdh2.cdhcluster.com agent
+	IP：172.16.150.66 cdh3.cdhcluster.com agent
+	
+2. 关闭主机防护(ALL)
+	2.1 防火墙
+	systemctl stop firewalld
+	systemctl disable firewalld
+	2.2 iptables
+	iptables -F
+	2.3 selinux
+	setenforce 0
+	sed -i 's,SELINUX=enforcing,SELINUX=disable,g' /etc/selinux/config
+	
+3. 磁盘挂载(ALL)
+	3.1 创建逻辑卷    (存放缓存使用)
+	3.1.1 创建分区
+		在/dev/vdb上创建vdb1,大小为200G
+		fdisk /dev/vdb
+	3.1.2 创建PV
+		pvcreate /dev/vdb1
+	3.1.3 创建VG
+		vgcreate cdhvg /dev/vdb1
+	3.1.4 创建逻辑卷LV
+		lvcreate -l 51199 -n cdhopt cdhvg
+	3.2 格式化磁盘
+		mkfs.xfs /dev/cdhvg/cdhopt
+	3.3 写入挂载配置文件
+		echo "/dev/cdhvg/cdhopt /opt xfs defaults 0 0">>/etc/fstab
+	3.4 挂载生效
+		mount -a
+		
+4. 安装JDK(ALL)
+	yum -y install java-1.8.0*
+	设置环境变量：
+		vim /etc/profile (末尾追加)     yum install -y vim  (vim包安装)
+			# java
+			export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk-1.8.0.282.b08-1.el7_9.x86_64
+			export JRE_HOME=$JAVA_HOME/jre
+			export CLASSPATH=.:$JAVA_HOME/lib:$JRE_HOME/lib
+			export PATH=$JAVA_HOME/bin:$PATH
+
+        （通过键盘方向键移动光标位置  o:下一行插入  a：当前位置新增；键盘[esc]退出插入模式，输入[:wq]：保存退出；输入[:q!]：不保存退出;）
+
+	环境变量即时生效
+		source /etc/profile
+
+
+
+
+5. 设置主机名，解析各节点(ALL)
+	5.1 设置主机名：
+		hostnamectl set-hostname cdh1/2/3.cdhcluster.com
+	5.2 解析各节点：
+		vim /etc/hosts(末尾添加)
+		172.16.150.64 cdh1.cdhcluster.com cdh1
+		172.16.150.65 cdh2.cdhcluster.com cdh2
+		172.16.150.66 cdh3.cdhcluster.com cdh3			
+		
+6. 设置各节点免密登录（ALL）
+	6.1 生成免密密钥
+		ssh-keygen
+	6.2 复制密钥到各节点
+		ssh-copy-id cdh1
+		ssh-copy-id cdh2
+		ssh-copy-id cdh3
+		
+
+
+
+
+7. 禁止使用交换和大页面（ALL）
+	7.1 禁止交换
+		vim /etc/sysctl.conf(末尾增加)
+			vm.swappiness=0
+		
+		sysctl vm.swappiness=0
+		
+	7.2 禁用大页面
+		echo never > /sys/kernel/mm/transparent_hugepage/defrag
+		echo never > /sys/kernel/mm/transparent_hugepage/enabled
+		写入开机初始化
+		vim /etc/rc.local(末尾增加)
+			echo never > /sys/kernel/mm/transparent_hugepage/defrag
+			echo never > /sys/kernel/mm/transparent_hugepage/enabled
+		chmod +x /etc/rc.d/rc.local
+
+8. 配置ntp服务和同步时间
+	8.1 设置cdh2为ntp服务器，以本地时间为准，其他节点时间同步此节点。（CDH2）
+		vim /etc/ntp.conf   (查看ntp 安装： rpm -qa |grep ntp   查看是否有ntp安装包：rpm -qa |grep ntp  安装ntp：yum install -y ntp)
+			# For more information about this file, see the man pages
+			# ntp.conf(5), ntp_acc(5), ntp_auth(5), ntp_clock(5), ntp_misc(5), ntp_mon(5).
+
+			driftfile /var/lib/ntp/drift
+
+			logfile /var/log/ntp.log #新增
+			pidfile   /var/run/ntpd.pid #新增
+			
+			leapfile  /etc/ntp.leapseconds #新增
+			includefile /etc/ntp/crypto/pw #新增
+			keys /etc/ntp/keys //新增
+			# Permit time synchronization with our time source, but do not
+			# permit the source to query or modify the service on this system.
+			#允许任何IP的客户端进行时间同步，但不允许修改NTP服务端参数，default类似于0.0.0.0
+			restrict default kod nomodify notrap nopeer noquery #修改
+			restrict -6 default kod nomodify notrap nopeer noquery #新增
+
+			# Permit all access over the loopback interface.  This could
+			# be tightened as well, but to do so would effect some of
+			# the administrative functions.
+			#允许通过本地回环接口进行所有访问
+			restrict 127.0.0.1 
+			restrict -6 ::1 //修改
+
+			# Hosts on local network are less restricted.
+			#restrict 192.168.1.0 mask 255.255.255.0 nomodify notrap
+			# 允许内网其他机器同步时间。网关和子网掩码。/etc/sysconfig/network-scripts/ifcfg-网卡名；route -n、ip route show  
+			restrict 192.168.113.0 mask 255.255.255.0 nomodify notrap #修改
+			# Use public servers from the pool.ntp.org project.
+			# Please consider joining the pool (http://www.pool.ntp.org/join.html).
+			#server 0.centos.pool.ntp.org iburst
+			#server 1.centos.pool.ntp.org iburst
+			#server 2.centos.pool.ntp.org iburst
+			#server 3.centos.pool.ntp.org iburst
+
+
+			# 外部时间服务器不可用时，以本地时间作为时间服务
+			server 127.127.1.0 #注意：此处是127.127.1.0  不是127.0.0.1
+			fudge 127.127.1.0 stratum 10
+
+			# Enable public key cryptography.
+			#crypto
+
+			includefile /etc/ntp/crypto/pw
+
+			# Key file containing the keys and key identifiers used when operating
+			# with symmetric key cryptography. 
+			keys /etc/ntp/keys
+
+			# Specify the key identifiers which are trusted.
+			#trustedkey 4 8 42
+
+			# Specify the key identifier to use with the ntpdc utility.
+			#requestkey 8
+
+			# Specify the key identifier to use with the ntpq utility.
+			#controlkey 8
+
+			# Enable writing of statistics records.
+			#statistics clockstats cryptostats loopstats peerstats
+
+			# Disable the monitoring facility to prevent amplification attacks using ntpdc
+			# monlist command when default restrict does not include the noquery flag. See
+			# CVE-2013-5211 for more details.
+			# Note: Monitoring will not be disabled with the limited restriction flag.
+			disable monitor
+
+	
+	8.2	其他节点从CDH2同步时间(CDH1,CDH3)
+		vim /etc/ntp.conf
+			# For more information about this file, see the man pages
+			# ntp.conf(5), ntp_acc(5), ntp_auth(5), ntp_clock(5), ntp_misc(5), ntp_mon(5).
+
+			driftfile /var/lib/ntp/drift
+
+			logfile /var/log/ntp.log
+			pidfile   /var/run/ntpd.pid
+			leapfile  /etc/ntp.leapseconds
+			includefile /etc/ntp/crypto/pw
+			keys /etc/ntp/keys
+
+			# Permit time synchronization with our time source, but do not
+			# permit the source to query or modify the service on this system.
+
+			restrict default kod nomodify notrap nopeer noquery
+			restrict -6 default kod nomodify notrap nopeer noquery
+
+			# Permit all access over the loopback interface.  This could
+			# be tightened as well, but to do so would effect some of
+			# the administrative functions.
+			# permit the source to query or modify the service on this system.
+			restrict 127.0.0.1
+			restrict -6 ::1
+
+			# Hosts on local network are less restricted.
+			#restrict 192.168.1.0 mask 255.255.255.0 nomodify notrap
+			# Use public servers from the pool.ntp.org project.
+			# Please consider joining the pool (http://www.pool.ntp.org/join.html).
+			#server 0.centos.pool.ntp.org
+			#server 1.centos.pool.ntp.org
+			#server 2.centos.pool.ntp.org
+			#server 3.centos.pool.ntp.org
+
+
+			server 192.168.113.10 iburst #ntp服务地址，用于同步时间
+			# Enable public key cryptography.
+			#crypto
+
+			includefile /etc/ntp/crypto/pw
+
+			# Key file containing the keys and key identifiers used when operating
+			# with symmetric key cryptography. 
+			keys /etc/ntp/keys
+
+			# Specify the key identifiers which are trusted.
+			#trustedkey 4 8 42
+
+			# Specify the key identifier to use with the ntpdc utility.
+			#requestkey 8
+
+			# Specify the key identifier to use with the ntpq utility.
+			#controlkey 8
+
+			# Enable writing of statistics records.
+			#statistics clockstats cryptostats loopstats peerstats
+
+			# Disable the monitoring facility to prevent amplification attacks using ntpdc
+			# monlist command when default restrict does not include the noquery flag. See
+			# CVE-2013-5211 for more details.
+			# Note: Monitoring will not be disabled with the limited restriction flag.
+			disable monitor
+
+	8.3 硬件时间同步(ALL)
+		vim /etc/sysconfig/ntpd (末尾增加)
+			SYNC_HWCLOCK=yes
+	8.4 添加ntp服务列表(ALL)
+		vim /etc/ntp/step-tickers(末尾增加)
+			cdh2.cdhcluster.com
+	8.5 重启ntpd服务，并设置开机启动(ALL)
+		systemctl restart ntpd
+		systemctl enable ntpd
+
+9. 安装mysql并创建相关用户、database. (CDH1)
+	9.1 tar包安装mysql(略)
+		mysql相关信息：
+			安装路径： /opt/mysql
+			启停方法： service mysql start/stop/restart/status
+			开机启动设置： chkconfig mysql on/off   (已设置开机自启动)
+			端口：3306
+			配置文件： /etc/my.cnf
+			账号信息： 账号root@localhost  密码root
+	9.2 创建用户并授权
+		mysql -uroot -proot
+		mysql> grant all on *.* to 'scm'@'%' identified by 'root'  with grant option;
+		mysql> grant all on *.* to 'apper'@'%' identified by 'root'  with grant option;
+		mysql> flush privileges;
+	9.3 创建对应的database
+		mysql -uscm -proot
+		mysql> create database scm;
+		
+		mysql -uapper -proot
+		mysql> create database hive;
+		mysql> create database hue;
+		mysql> create database ooz;
+		
+10. 安装cm和cdh 
+	10.1 创建cloudera-manager目录，并上传解压tar包(ALL)
+		mkdir -p /opt/cloudera-manager
+		将下载好的cloudera-manager-centos7-cm5.13.3_x86_64.tar.gz文件上传至各节点，然后执行
+		tar -zxvf cloudera-manager-centos7-cm5.13.3_x86_64.tar.gz -C /opt/cloudera-manager
+	10.2 创建cm所需用户(ALL)
+		useradd -r -d /opt/cloudera-manager/cm-5.13.3/run/cloudera-scm-server -M -c "Cloudera SCM User" cloudera-scm
+	10.3 在server节点创建cm服务本地数据存放目录，并赋予权限（CDH1）
+		mkdir /var/lib/cloudera-scm-server
+		chown cloudera-scm.cloudera-scm /var/lib/cloudera-scm-server
+	10.4 在所有agent节点修改配置文件上传mysql驱动（ALL）
+		上传mysql驱动mysql-connector-java-5.1.48.jar至/usr/share/java/下，改名为mysql-connector-java.jar
+		vim /opt/cloudera-manager/cm-5.13.3/etc/cloudera-scm-agent/config.ini（修改）
+			server_host=cdh1.cdhcluster.com
+	10.5 初始化scm数据库。（CDH1）
+		/opt/cloudera-manager/cm-5.13.3/share/cmf/schema/scm_prepare_database.sh  mysql scm scm root
+		mysql scm scm root   分别代表：数据库类型 database名称 数据库用户名 数据库密码
+		(如果数据库非本机，则执行/opt/cloudera-manager/cm-5.13.3/share/cmf/schema/scm_prepare_database.sh -h 192.168.113.11 mysql scm scm root)
+	10.6 创建CDH文件存放目录，并上传CDH文件（CDH1）
+		mkdir -p /opt/cloudera/parcel-repo
+		上传或下载以下三个文件至/opt/cloudera/parcel-repo/下：
+			CDH-5.13.3-1.cdh5.13.3.p0.2-el7.parcel
+			manifest.json
+			CDH-5.13.3-1.cdh5.13.3.p0.2-el7.parcel.sha1
+		修改*.sha1为*.sha
+			mv CDH-5.13.3-1.cdh5.13.3.p0.2-el7.parcel.sha1 CDH-5.13.3-1.cdh5.13.3.p0.2-el7.parcel.sha
+	10.7 创建/opt/cloudera/parcels目录，修改文件权限（ALL）
+		mkdir -p /opt/cloudera/parcels
+		chown -R cloudera-scm.cloudera-scm /opt/cloudera*     //（此命令所有节点执行）
+	10.8 启动CM server(CDH1)
+		/opt/cloudera-manager/cm-5.13.3/etc/init.d/cloudera-scm-server start
+	10.9 启动CM agent(ALL)
+		/opt/cloudera-manager/cm-5.13.3/etc/init.d/cloudera-scm-agent start
+		
+11. 登录cm平台，进行初始设置
+	11.1 登录 http://192.168.130.10:7180/
+		密码：admin/admin
+	11.2 接受许可条款和条件
+	11.3 版本选择 免费版本
+	11.4 为CDH群集安装指定主机
+		选择当前管理的主机页签，全选继续
+	11.5 群集选择
+		选择CDH的版本，选择CDH-5.13.3.p0.2
+		其他默认继续
+	11.6 群集设置
+		安装的CDH5服务，选择所有服务
+	11.7 自定义角色分配
+		默认选择，或者DataNode和zookeeper选择3个，然后继续。
+	11.8 数据库设置
+		HIVE
+		数据库主机名称cdh1.cdhcluster.com 数据库类型mysql  数据库名称：hive 用户名： apper 密码：Cnbm@cdh6
+		oozie server
+		数据库主机名称cdh1.cdhcluster.com 数据库类型mysql  数据库名称：ooz 用户名： apper 密码：Cnbm@cdh6
+		hue
+		数据库主机名称cdh1.cdhcluster.com 数据库类型mysql  数据库名称：hue 用户名： apper 密码：Cnbm@cdh6
+		测试连接 successful    继续
+	11.9 审核更改
+		全部默认，继续
+	11.10 首次运行	
+		等待全部完成 继续
+		然后选择 完成
+
+12. HUE	运行状况问题，需要安装httpd和mod_ssl（CDH1）
+	yum -y install httpd mod_ssl
+	安装完成后，重启scm服务端和客户端
+	重新启动CM server(CDH1)
+		/opt/cloudera-manager/cm-5.13.3/etc/init.d/cloudera-scm-server restart
+	重新启动CM agent(ALL)
+		/opt/cloudera-manager/cm-5.13.3/etc/init.d/cloudera-scm-agent restart
+	在web管理界面，也需要重启一下cm和cluster.重启后，问题解决。
+		
+		
+		
+			
+		
+	
+		
+		
