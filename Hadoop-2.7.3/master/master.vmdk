@@ -1,0 +1,31 @@
+# Disk DescriptorFile
+version=1
+encoding="GBK"
+CID=43381c17
+parentCID=ffffffff
+createType="twoGbMaxExtentSparse"
+
+# Extent description
+RW 8323072 SPARSE "master-s001.vmdk"
+RW 8323072 SPARSE "master-s002.vmdk"
+RW 8323072 SPARSE "master-s003.vmdk"
+RW 8323072 SPARSE "master-s004.vmdk"
+RW 8323072 SPARSE "master-s005.vmdk"
+RW 327680 SPARSE "master-s006.vmdk"
+RW 8323072 SPARSE "master-s007.vmdk"
+RW 8323072 SPARSE "master-s008.vmdk"
+RW 8323072 SPARSE "master-s009.vmdk"
+RW 8323072 SPARSE "master-s010.vmdk"
+RW 8323072 SPARSE "master-s011.vmdk"
+RW 327680 SPARSE "master-s012.vmdk"
+
+# The Disk Data Base 
+#DDB
+
+ddb.adapterType = "lsilogic"
+ddb.geometry.cylinders = "5221"
+ddb.geometry.heads = "255"
+ddb.geometry.sectors = "63"
+ddb.longContentID = "288049aebc83249798f437f743381c17"
+ddb.uuid = "60 00 C2 97 ae ba b1 2f-76 a3 c4 72 52 00 2c 1b"
+ddb.virtualHWVersion = "16"
